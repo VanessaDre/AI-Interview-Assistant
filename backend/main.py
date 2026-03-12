@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
+from backend.routes.questions import router as questions_router
 import os
 
 # Lädt .env Datei
@@ -11,6 +12,8 @@ app = FastAPI(
     description="RAG-based Interview Tool for Recruiters",
     version="0.1.0"
 )
+
+app.include_router(questions_router, prefix="/api", tags=["Questions"])
 
 # Health Check Endpoint – Server
 @app.get("/")
