@@ -12,8 +12,17 @@ __pycache__/
 *.pyd
 .DS_Store
 
+# Database
+*.db
+*.sqlite3
+
 # VectorStore
 backend/vectorstore/
+vectorstore/
+
+# Uploads (PDFs – no personal data in Git)
+backend/uploads/
+uploads/
 
 # PyCharm
 .idea/

@@ -69,3 +69,14 @@ def retrieve_relevant_chunks(query: str, doc_id: str, n_results: int = 3) -> str
     # Join chunks into a single context string
     chunks = results["documents"][0]
     return "\n\n".join(chunks)
+
+
+def delete_document(doc_id: str) -> None:
+    """Deletes all vectors for a document from ChromaDB"""
+    try:
+        collection = chroma_client.get_or_create_collection(name="interview_docs")
+        results = collection.get(where={"doc_id": doc_id})
+        if results["ids"]:
+            collection.delete(ids=results["ids"])
+    except Exception as e:
+        print(f"Warning: Could not delete vectors for {doc_id}: {e}")
