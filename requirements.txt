@@ -9,4 +9,4 @@ chromadb
 pdfplumber
 pydantic
 sqlalchemy
-
+python-multipart

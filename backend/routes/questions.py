@@ -4,15 +4,15 @@ from backend.services.openai_service import generate_interview_questions
 
 router = APIRouter()
 
-# Definiert wie der Request aussehen soll
 class InterviewRequest(BaseModel):
-    job_description: str
-    cv_text: str
+    job_description_id: str # doc_id from upload
+    cv_id: str # doc_id from upload
 
 @router.post("/generate-questions")
 def generate_questions(request: InterviewRequest):
+    """Generates interview questions from uploaded JD and CV documents"""
     result = generate_interview_questions(
-        job_description=request.job_description,
-        cv_text=request.cv_text
+        job_description_id=request.job_description_id,
+        cv_id=request.cv_id
     )
     return result

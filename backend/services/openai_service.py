@@ -1,33 +1,50 @@
 from openai import OpenAI
+from backend.services.rag_service import retrieve_relevant_chunks
 from dotenv import load_dotenv
 import os
+import json
 
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-def generate_interview_questions(job_description: str, cv_text: str) -> dict:
-    system_prompt = """Du bist ein erfahrener HR-Spezialist. 
-    Deine Aufgabe ist es, strukturierte Interviewfragen zu erstellen.
-    Antworte immer auf Deutsch.
-    Gib deine Antwort ausschließlich als JSON zurück – kein Text davor oder danach."""
+def generate_interview_questions(
+        job_description_id: str,
+        cv_id: str
+) -> dict:
+    """Generates interview questions using RAG context from ChromaDB"""
 
-    user_prompt = f"""Erstelle 6 Interviewfragen basierend auf dieser Job Description und diesem CV.
+    # Retrieve relevant chunks from ChromaDB
+    jd_context = retrieve_relevant_chunks(
+        query="job requirements skills responsibilities",
+        doc_id=job_description_id
+    )
+    cv_context = retrieve_relevant_chunks(
+        query="candidate experience skills education",
+        doc_id=cv_id
+    )
 
-JOB DESCRIPTION:
-{job_description}
+    system_prompt = """You are an experienced HR specialist.
+    Your task is to create structured interview questions based on a job description and a candidate CV.
+    Always respond in German.
+    Return your answer exclusively as JSON – no text before or after."""
 
-CV:
-{cv_text}
+    user_prompt = f"""Create 6 interview questions based on this job description and candidate CV.
 
-Antworte NUR mit diesem JSON-Format:
+JOB DESCRIPTION CONTEXT:
+{jd_context}
+
+CANDIDATE CV CONTEXT:
+{cv_context}
+
+Respond ONLY with this JSON format:
 {{
   "questions": [
     {{
-      "question": "Die Frage hier",
-      "category": "Soft Skill oder Hard Skill oder Erfahrung oder Motivation",
-      "difficulty": "leicht oder mittel oder schwer"
+      "question": "The question here",
+      "category": "Soft Skill or Hard Skill or Experience or Motivation",
+      "difficulty": "easy or medium or hard"
     }}
   ]
 }}"""
@@ -42,6 +59,5 @@ Antworte NUR mit diesem JSON-Format:
         max_tokens=1000
     )
 
-    import json
     raw = response.choices[0].message.content
     return json.loads(raw)

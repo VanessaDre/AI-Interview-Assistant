@@ -1,12 +1,13 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from backend.routes.questions import router as questions_router
+from backend.routes.upload import router as upload_router
 import os
 
-# Lädt .env Datei
+#.env
 load_dotenv()
 
-# FastAPI App erstellen
+# FastAPI App
 app = FastAPI(
     title="AI Interview Assistant",
     description="RAG-based Interview Tool for Recruiters",
@@ -14,8 +15,9 @@ app = FastAPI(
 )
 
 app.include_router(questions_router, prefix="/api", tags=["Questions"])
+app.include_router(upload_router, prefix="/api", tags=["Upload"])
 
-# Health Check Endpoint – Server
+# Health Check Endpoint: Server
 @app.get("/")
 def root():
     return {"status": "running", "message": "AI Interview Assistant API is up!"}
