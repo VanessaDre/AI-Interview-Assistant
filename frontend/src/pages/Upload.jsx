@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Upload as UploadIcon, CheckCircle, ChevronRight, Shield, Users, Briefcase, UserPlus } from 'lucide-react'
+import { Upload as UploadIcon, CheckCircle, ChevronRight, Shield, Users, Briefcase, UserPlus, ChevronDown, ChevronUp, FileSearch } from 'lucide-react'
 import { uploadJD, uploadCV, createRound, getJobDescriptions, getInterviewRounds, getCandidates, assignCandidateToRound } from '../services/api'
 
 function StepBadge({ num, active, done }) {
@@ -7,6 +7,102 @@ function StepBadge({ num, active, done }) {
     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
       done ? 'bg-emerald-100 text-emerald-700' : active ? 'bg-brand-100 text-brand-700' : 'bg-surface-200 text-gray-400'
     }`}>{done ? <CheckCircle size={16} /> : num}</div>
+  )
+}
+
+function AnalysisSection({ title, items }) {
+  if (!items || (Array.isArray(items) && items.length === 0)) return null
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-medium text-brand-700 mb-1">{title}</p>
+      {Array.isArray(items) ? (
+        <ul className="space-y-0.5">
+          {items.map((item, i) => (
+            <li key={i} className="text-xs text-gray-600 flex gap-1.5">
+              <span className="text-brand-400">·</span>
+              <span>{typeof item === 'string' ? item : JSON.stringify(item)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-gray-600">{String(items)}</p>
+      )}
+    </div>
+  )
+}
+
+function AnalysisPanel({ analysis, type }) {
+  const [open, setOpen] = useState(false)
+  if (!analysis) {
+    return (
+      <div className="bg-surface-50 border border-surface-200 rounded-xl p-3 text-xs text-gray-500">
+        Analyse konnte nicht erzeugt werden. Upload ist erfolgreich, Fragen koennen trotzdem generiert werden.
+      </div>
+    )
+  }
+
+  const isJD = type === 'jd'
+  const title = isJD ? 'JD-Analyse' : 'CV-Analyse'
+  const subtitle = isJD
+    ? 'Der JD Analyst hat folgende Struktur aus der Stelle extrahiert'
+    : 'Der CV Analyst hat folgende Struktur aus dem Lebenslauf extrahiert'
+
+  return (
+    <div className="bg-white border border-brand-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-brand-50/50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <FileSearch size={16} className="text-brand-600" />
+          <div className="text-left">
+            <p className="text-sm font-medium text-brand-700">{title}</p>
+            <p className="text-xs text-gray-500">{subtitle}</p>
+          </div>
+        </div>
+        {open ? <ChevronUp size={16} className="text-brand-600" /> : <ChevronDown size={16} className="text-brand-600" />}
+      </button>
+      {open && (
+        <div className="px-4 py-3 border-t border-brand-100 bg-brand-50/30">
+          {isJD ? (
+            <>
+              {analysis.role_title && (
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-brand-700 mb-1">Rolle</p>
+                  <p className="text-xs text-gray-700">{analysis.role_title}</p>
+                </div>
+              )}
+              {analysis.experience_level && (
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-brand-700 mb-1">Seniority</p>
+                  <p className="text-xs text-gray-700">{analysis.experience_level}</p>
+                </div>
+              )}
+              <AnalysisSection title="Verantwortlichkeiten" items={analysis.key_responsibilities} />
+              <AnalysisSection title="Hard Skills" items={analysis.required_hard_skills} />
+              <AnalysisSection title="Soft Skills" items={analysis.required_soft_skills} />
+              <AnalysisSection title="Nice-to-have" items={analysis.nice_to_have} />
+            </>
+          ) : (
+            <>
+              {analysis.experience_level && (
+                <div className="mb-3">
+                  <p className="text-xs font-medium text-brand-700 mb-1">Erfahrungsstand</p>
+                  <p className="text-xs text-gray-700">{analysis.experience_level}</p>
+                </div>
+              )}
+              <AnalysisSection title="Hard Skills" items={analysis.hard_skills} />
+              <AnalysisSection title="Soft Skills" items={analysis.soft_skills} />
+              <AnalysisSection title="Erfahrung" items={analysis.work_experience} />
+              <AnalysisSection title="Ausbildung" items={analysis.education} />
+              <AnalysisSection title="Projekte" items={analysis.projects} />
+              <AnalysisSection title="Zertifikate" items={analysis.certifications} />
+              <AnalysisSection title="Sprachen" items={analysis.languages} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -18,6 +114,7 @@ export default function UploadPage() {
   const [talentPool, setTalentPool] = useState([])
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [jdResult, setJdResult] = useState(null)
   const [jdFile, setJdFile] = useState(null)
   const [jdTitle, setJdTitle] = useState('')
   const [jdCompany, setJdCompany] = useState('')
@@ -39,8 +136,6 @@ export default function UploadPage() {
 
   useEffect(() => {
     if (step === 3) {
-      // 4-table schema: candidates have many-to-many relationship with rounds
-      // All candidates stay in talent pool permanently, can be in 0, 1 or multiple rounds
       getCandidates().then(r => {
         setTalentPool(r.data || [])
       }).catch(() => {})
@@ -50,7 +145,13 @@ export default function UploadPage() {
   const handleJdUpload = async () => {
     if (!jdFile || !jdTitle || !jdCompany) return
     setLoading(true)
-    try { const res = await uploadJD(jdFile, jdTitle, jdCompany); setSelectedJd(res.data.id); setJds(p => [...p, res.data]); setStep(2) }
+    try {
+      const res = await uploadJD(jdFile, jdTitle, jdCompany)
+      setSelectedJd(res.data.id)
+      setJds(p => [...p, res.data])
+      setJdResult(res.data)
+      setStep(2)
+    }
     catch (e) { alert('Upload failed: ' + (e.response?.data?.detail || e.message)) }
     setLoading(false)
   }
@@ -108,6 +209,7 @@ export default function UploadPage() {
     setJdFile(null)
     setJdTitle('')
     setJdCompany('')
+    setJdResult(null)
     setRoundTitle('')
     setSelectedJd(null)
     setSelectedRound(null)
@@ -177,7 +279,7 @@ export default function UploadPage() {
                 <input type="file" accept=".pdf" className="hidden" onChange={e => setCvFile(e.target.files[0])} />
               </label>
               <button onClick={handleCvUpload} disabled={loading || !cvFile || !candidateName} className="w-full bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl py-2.5 text-sm font-medium hover:from-brand-600 hover:to-brand-700 disabled:opacity-40 transition-all shadow-sm">
-                {loading ? 'Uploading & anonymizing...' : 'CV in Talent Pool hochladen'}
+                {loading ? 'Uploading, anonymizing & analyzing...' : 'CV in Talent Pool hochladen'}
               </button>
             </div>
           )}
@@ -195,6 +297,7 @@ export default function UploadPage() {
                   <p className="text-xs text-brand-600">{result.gdpr.report}</p>
                 </div>
               )}
+              <AnalysisPanel analysis={result.analysis} type="cv" />
               <div className="flex gap-2">
                 <button onClick={resetForm} className="text-sm text-brand-500 hover:text-brand-700">Weiteren Kandidaten hochladen →</button>
               </div>
@@ -248,7 +351,7 @@ export default function UploadPage() {
                 <input type="file" accept=".pdf" className="hidden" onChange={e => setJdFile(e.target.files[0])} />
               </label>
               <button onClick={handleJdUpload} disabled={loading || !jdFile} className="w-full bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl py-2.5 text-sm font-medium hover:from-brand-600 hover:to-brand-700 disabled:opacity-40 transition-all shadow-sm">
-                {loading ? 'Uploading...' : 'JD hochladen'}
+                {loading ? 'Uploading & analyzing...' : 'JD hochladen'}
               </button>
             </div>
           </div>
@@ -256,6 +359,9 @@ export default function UploadPage() {
         {step === 2 && (
           <div className="space-y-4">
             <h3 className="font-medium text-gray-700">Schritt 2: Interview Round</h3>
+            {jdResult?.analysis && (
+              <AnalysisPanel analysis={jdResult.analysis} type="jd" />
+            )}
             {rounds.length > 0 && (
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Bestehende Round waehlen:</label>
@@ -312,7 +418,7 @@ export default function UploadPage() {
                   <input type="file" accept=".pdf" className="hidden" onChange={e => setCvFile(e.target.files[0])} />
                 </label>
                 <button onClick={handleCvUpload} disabled={loading || !cvFile || !candidateName} className="w-full bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded-xl py-2.5 text-sm font-medium hover:from-brand-600 hover:to-brand-700 disabled:opacity-40 transition-all shadow-sm">
-                  {loading ? 'Uploading & anonymizing...' : 'CV hochladen'}
+                  {loading ? 'Uploading, anonymizing & analyzing...' : 'CV hochladen'}
                 </button>
               </>
             )}
@@ -392,6 +498,7 @@ export default function UploadPage() {
                 <p className="text-xs text-brand-600">{result.gdpr.report}</p>
               </div>
             )}
+            {!result.fromTalentPool && <AnalysisPanel analysis={result.analysis} type="cv" />}
             <button onClick={() => { setStep(3); setCvFile(null); setCandidateName(''); setResult(null); setSelectedTalentPoolId('') }} className="text-sm text-brand-500 hover:text-brand-700">Weiteren Kandidaten →</button>
           </div>
         )}
@@ -399,3 +506,4 @@ export default function UploadPage() {
     </div>
   )
 }
+

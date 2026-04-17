@@ -4,11 +4,15 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from backend.services.rag_service import extract_text_from_pdf, store_document
 from backend.services.gdpr_service import anonymize_cv_text, format_anonymization_report
+from backend.agents.interview_agents import jd_analysis_agent, cv_analysis_agent
 from backend.database import get_db, JobDescription, Candidate, InterviewRound
 import uuid
 import os
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
 UPLOAD_DIR = "backend/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -28,17 +32,14 @@ async def _read_and_validate_pdf(file: UploadFile) -> bytes:
     - Content starts with PDF magic bytes (not just .pdf extension)
     Returns the file bytes, ready to be written to disk.
     """
-    # Check extension (cheap first check)
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are allowed",
         )
 
-    # Read full content (FastAPI streams into memory; size is enforced below)
     content = await file.read()
 
-    # Size limit
     if len(content) > MAX_PDF_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -51,7 +52,6 @@ async def _read_and_validate_pdf(file: UploadFile) -> bytes:
             detail="Uploaded file is empty",
         )
 
-    # Magic bytes check: real PDF starts with %PDF-
     if not content.startswith(PDF_MAGIC_BYTES):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -77,6 +77,27 @@ def _validate_text_field(value: str, field_name: str, max_len: int) -> str:
     return cleaned
 
 
+def _safe_analyze(agent_func, doc_id: str, doc_type: str) -> Optional[dict]:
+    """Runs a LangGraph agent function safely and returns the analysis dict.
+
+    If the analysis fails (e.g. OpenAI outage, malformed JSON), we log the
+    error and return None so the upload itself still succeeds. The frontend
+    can check whether analysis is present and display a fallback message.
+    """
+    try:
+        if doc_type == "jd":
+            state = {"jd_doc_id": doc_id}
+            result_state = agent_func(state)
+            return result_state.get("jd_analysis")
+        else:
+            state = {"cv_doc_id": doc_id}
+            result_state = agent_func(state)
+            return result_state.get("cv_analysis")
+    except Exception as e:
+        logger.warning(f"{doc_type.upper()} analysis failed for doc_id={doc_id}: {e}")
+        return None
+
+
 # ── Upload Routes ─────────────────────────────────────────────
 
 @router.post("/upload/job-description")
@@ -87,7 +108,8 @@ async def upload_job_description(
     db: Session = Depends(get_db),
 ):
     """Uploads a job description PDF, extracts text, stores in vector DB and SQL DB.
-    Input validation: PDF magic bytes, 10 MB limit, title/company length bounds.
+    Runs the JD Analyst agent to extract structured requirements and returns
+    them in the response for immediate frontend display.
     """
     title = _validate_text_field(title, "title", MAX_TITLE_LEN)
     company = _validate_text_field(company, "company", MAX_COMPANY_LEN)
@@ -100,6 +122,9 @@ async def upload_job_description(
 
     text = extract_text_from_pdf(file_path)
     store_document(text=text, doc_type="job_description", doc_id=doc_id)
+
+    # Run JD analysis agent for immediate structured feedback
+    jd_analysis = _safe_analyze(jd_analysis_agent, doc_id, "jd")
 
     jd = JobDescription(
         id=str(uuid.uuid4()),
@@ -117,6 +142,7 @@ async def upload_job_description(
         "company": jd.company,
         "doc_id": jd.doc_id,
         "message": "Job Description stored",
+        "analysis": jd_analysis,
     }
 
 
@@ -130,7 +156,8 @@ async def upload_cv(
     """Uploads a CV PDF. The interview_round_id is optional:
     - If provided: candidate is immediately assigned to the given round.
     - If empty: candidate is created standalone (Talent Pool entry).
-    Input validation: PDF magic bytes, 10 MB limit, name length bounds.
+    Runs the CV Analyst agent to extract structured qualifications and returns
+    them in the response for immediate frontend display.
     """
     candidate_name = _validate_text_field(candidate_name, "candidate_name", MAX_NAME_LEN)
 
@@ -150,6 +177,9 @@ async def upload_cv(
     raw_text = extract_text_from_pdf(file_path)
     anonymized_text, gdpr_report = anonymize_cv_text(raw_text)
     store_document(text=anonymized_text, doc_type="cv", doc_id=doc_id)
+
+    # Run CV analysis agent on the anonymized content
+    cv_analysis = _safe_analyze(cv_analysis_agent, doc_id, "cv")
 
     candidate = Candidate(
         id=str(uuid.uuid4()),
@@ -176,6 +206,7 @@ async def upload_cv(
             "report": format_anonymization_report(gdpr_report),
             "details": gdpr_report,
         },
+        "analysis": cv_analysis,
     }
 
 
@@ -298,4 +329,3 @@ def list_candidates(interview_round_id: str = None, db: Session = Depends(get_db
         }
         for c in candidates
     ]
-
