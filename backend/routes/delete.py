@@ -12,7 +12,7 @@ SYSTEM_PROTECTED_ROUND_IDS = {"SYSTEM_KENNENLERN_ROUND_DEFAULT"}
 
 @router.delete("/candidates/{candidate_id}")
 def delete_candidate(candidate_id: str, db: Session = Depends(get_db)):
-    """Deletes a candidate completely.
+    """Deletes a candidate completely (DSGVO Art. 17).
     All assignments in candidate_rounds are removed automatically via cascade.
     Interview rounds and job descriptions are not affected."""
     candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
@@ -97,5 +97,3 @@ def delete_job_description(jd_id: str, db: Session = Depends(get_db)):
     return {
         "message": f"Job Description '{jd_title}' and all its rounds deleted. Candidates remain in the system.",
     }
-
-

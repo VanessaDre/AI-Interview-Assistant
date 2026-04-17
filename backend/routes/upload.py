@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -12,6 +12,72 @@ router = APIRouter()
 UPLOAD_DIR = "backend/uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# ── Security Limits ───────────────────────────────────────────
+MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+PDF_MAGIC_BYTES = b"%PDF-"
+MAX_TITLE_LEN = 200
+MAX_COMPANY_LEN = 200
+MAX_NAME_LEN = 100
+
+
+# ── Helpers ───────────────────────────────────────────────────
+
+async def _read_and_validate_pdf(file: UploadFile) -> bytes:
+    """Reads an uploaded file and validates:
+    - Size is within MAX_PDF_SIZE_BYTES
+    - Content starts with PDF magic bytes (not just .pdf extension)
+    Returns the file bytes, ready to be written to disk.
+    """
+    # Check extension (cheap first check)
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are allowed",
+        )
+
+    # Read full content (FastAPI streams into memory; size is enforced below)
+    content = await file.read()
+
+    # Size limit
+    if len(content) > MAX_PDF_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_PDF_SIZE_BYTES // (1024*1024)} MB",
+        )
+
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty",
+        )
+
+    # Magic bytes check: real PDF starts with %PDF-
+    if not content.startswith(PDF_MAGIC_BYTES):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is not a valid PDF (invalid file signature)",
+        )
+
+    return content
+
+
+def _validate_text_field(value: str, field_name: str, max_len: int) -> str:
+    """Strips and validates a required text form field."""
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{field_name}' is required",
+        )
+    if len(cleaned) > max_len:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{field_name}' exceeds maximum length of {max_len} characters",
+        )
+    return cleaned
+
+
+# ── Upload Routes ─────────────────────────────────────────────
 
 @router.post("/upload/job-description")
 async def upload_job_description(
@@ -20,13 +86,21 @@ async def upload_job_description(
     company: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    """Uploads a job description PDF, extracts text, stores in vector DB and SQL DB."""
+    """Uploads a job description PDF, extracts text, stores in vector DB and SQL DB.
+    Input validation: PDF magic bytes, 10 MB limit, title/company length bounds.
+    """
+    title = _validate_text_field(title, "title", MAX_TITLE_LEN)
+    company = _validate_text_field(company, "company", MAX_COMPANY_LEN)
+    content = await _read_and_validate_pdf(file)
+
     doc_id = str(uuid.uuid4())
     file_path = f"{UPLOAD_DIR}/{doc_id}.pdf"
     with open(file_path, "wb") as f:
-        f.write(await file.read())
+        f.write(content)
+
     text = extract_text_from_pdf(file_path)
     store_document(text=text, doc_type="job_description", doc_id=doc_id)
+
     jd = JobDescription(
         id=str(uuid.uuid4()),
         title=title,
@@ -56,18 +130,22 @@ async def upload_cv(
     """Uploads a CV PDF. The interview_round_id is optional:
     - If provided: candidate is immediately assigned to the given round.
     - If empty: candidate is created standalone (Talent Pool entry).
-    The candidate can be assigned to rounds later via separate endpoints.
+    Input validation: PDF magic bytes, 10 MB limit, name length bounds.
     """
+    candidate_name = _validate_text_field(candidate_name, "candidate_name", MAX_NAME_LEN)
+
     round_obj = None
     if interview_round_id:
         round_obj = db.query(InterviewRound).filter(InterviewRound.id == interview_round_id).first()
         if not round_obj:
             raise HTTPException(status_code=404, detail="Interview Round not found")
 
+    content = await _read_and_validate_pdf(file)
+
     doc_id = str(uuid.uuid4())
     file_path = f"{UPLOAD_DIR}/{doc_id}.pdf"
     with open(file_path, "wb") as f:
-        f.write(await file.read())
+        f.write(content)
 
     raw_text = extract_text_from_pdf(file_path)
     anonymized_text, gdpr_report = anonymize_cv_text(raw_text)
@@ -220,3 +298,4 @@ def list_candidates(interview_round_id: str = None, db: Session = Depends(get_db
         }
         for c in candidates
     ]
+
