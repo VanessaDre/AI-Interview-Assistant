@@ -1,15 +1,10 @@
-"""LangGraph Interview Pipeline – orchestrates JD, CV, and Question agents.
+"""LangGraph Interview Pipeline – orchestrates JD, CV, Question, and Quality agents.
 
-Graph flow:
-  START → jd_analysis → cv_analysis → question_generation → END
+Graph flow (standard mode):
+  START → jd_analysis → cv_analysis → question_generation → quality_review → END
 
-State flows through all nodes, each agent enriches it.
-Langfuse traces the entire pipeline run.
-
-Introductory mode:
-  When `interview_mode == "introductory"`, the JD-Analyst is skipped and a
-  deterministic placeholder jd_analysis is used. The Question-Generator detects
-  the mode and switches to CV-based introductory prompts.
+Graph flow (introductory mode):
+  START → introductory_passthrough → cv_analysis → question_generation → quality_review → END
 """
 
 from langgraph.graph import StateGraph, START, END
@@ -18,6 +13,7 @@ from backend.agents.interview_agents import (
     cv_analysis_agent,
     question_generator_agent,
     introductory_passthrough_agent,
+    quality_review_agent,
 )
 from backend.services.langfuse_service import create_trace
 from datetime import datetime, timezone
@@ -33,21 +29,18 @@ class InterviewState(TypedDict, total=False):
     categories: list[dict]
     existing_questions: dict | None
     interview_mode: Literal["standard", "introductory"]
-    # Intermediate (filled by agents)
+    # Intermediate
     jd_analysis: dict
     cv_analysis: dict
     # Output
     questions: dict
+    flagged_questions: list[dict]
 
 
 # ── Conditional Routing ───────────────────────────────────────
 
 def route_from_start(state: InterviewState) -> str:
-    """Routes the pipeline entry point based on interview_mode.
-
-    - standard mode  → full JD analysis
-    - introductory   → skip JD analysis (no target role to analyze)
-    """
+    """Routes the pipeline entry point based on interview_mode."""
     if state.get("interview_mode") == "introductory":
         return "introductory_passthrough"
     return "jd_analysis"
@@ -64,6 +57,7 @@ def build_interview_graph() -> StateGraph:
     graph.add_node("introductory_passthrough", introductory_passthrough_agent)
     graph.add_node("cv_analysis", cv_analysis_agent)
     graph.add_node("question_generation", question_generator_agent)
+    graph.add_node("quality_review", quality_review_agent)
 
     # Conditional entry: introductory mode skips JD analysis entirely
     graph.add_conditional_edges(
@@ -75,18 +69,19 @@ def build_interview_graph() -> StateGraph:
         }
     )
 
-    # Both paths converge at cv_analysis
+    # Both entry paths converge at cv_analysis
     graph.add_edge("jd_analysis", "cv_analysis")
     graph.add_edge("introductory_passthrough", "cv_analysis")
     graph.add_edge("cv_analysis", "question_generation")
-    graph.add_edge("question_generation", END)
+    # Quality review runs after question generation
+    graph.add_edge("question_generation", "quality_review")
+    graph.add_edge("quality_review", END)
 
     return graph.compile()
 
 
 # ── Pipeline Runner ───────────────────────────────────────────
 
-# Compile once at module level for reuse
 interview_pipeline = build_interview_graph()
 
 
@@ -97,21 +92,9 @@ def run_interview_pipeline(
         existing_questions: dict | None = None,
         interview_mode: str = "standard",
 ) -> dict:
-    """Runs the complete interview pipeline.
-
-    Args:
-        jd_doc_id: ChromaDB doc_id of the job description (None for introductory mode)
-        cv_doc_id: ChromaDB doc_id of the anonymized CV
-        categories: List of category configs with count, difficulty, weight
-        existing_questions: Optional template for consistency
-        interview_mode: "standard" (JD + CV) or "introductory" (CV-only)
-
-    Returns:
-        dict with jd_analysis, cv_analysis, questions, and compliance metadata
-    """
+    """Runs the complete interview pipeline including quality review + HITL flagging."""
     request_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Create Langfuse trace for entire pipeline
     create_trace(
         name="interview_pipeline",
         metadata={
@@ -123,7 +106,6 @@ def run_interview_pipeline(
         }
     )
 
-    # Run the graph
     initial_state: InterviewState = {
         "jd_doc_id": jd_doc_id or "",
         "cv_doc_id": cv_doc_id,
@@ -135,12 +117,16 @@ def run_interview_pipeline(
     result = interview_pipeline.invoke(initial_state)
     response_timestamp = datetime.now(timezone.utc).isoformat()
 
-    # Attach compliance metadata
-    agents_executed = ["cv_analysis_agent", "question_generator_agent"]
+    # Compose agents_executed list for audit
+    agents_executed = ["cv_analysis_agent", "question_generator_agent", "quality_review_agent"]
     if interview_mode == "standard":
         agents_executed.insert(0, "jd_analysis_agent")
     else:
         agents_executed.insert(0, "introductory_passthrough_agent")
+
+    # Compliance & audit metadata
+    flagged_count = len(result.get("flagged_questions", []))
+    approved_count = len(result.get("questions", {}).get("questions", []))
 
     result["compliance"] = {
         "human_oversight_disclaimer": (
@@ -153,9 +139,17 @@ def run_interview_pipeline(
             "regulation": "EU AI Act (Regulation 2024/1689) – Annex III, Nr. 4a",
             "risk_category": "high_risk",
             "human_oversight_required": True,
+            "human_in_the_loop_active": flagged_count > 0,
             "automated_decision": False,
             "emotion_recognition": False,
             "data_training_opt_out": True,
+            "quality_review_enabled": True,
+            "anti_discrimination_check": "eu_ai_act_art_10_15",
+        },
+        "quality_summary": {
+            "approved_questions": approved_count,
+            "flagged_questions": flagged_count,
+            "review_active": True,
         },
         "audit": {
             "model_used": "gpt-4o-mini",
@@ -169,3 +163,5 @@ def run_interview_pipeline(
     }
 
     return result
+
+

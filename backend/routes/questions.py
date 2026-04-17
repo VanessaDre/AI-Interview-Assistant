@@ -9,6 +9,10 @@ import json
 
 router = APIRouter()
 
+# ── System-level constants ─────────────────────────────────────
+
+SYSTEM_INTRODUCTORY_ROUND_ID = "SYSTEM_KENNENLERN_ROUND_DEFAULT"
+
 
 class CategoryConfig(BaseModel):
     category: str
@@ -39,6 +43,14 @@ DEFAULT_CATEGORIES = [
     CategoryConfig(category="Motivation", count=1, difficulty="easy", weight=0.20),
 ]
 
+# Categories tuned for introductory conversations (no target role)
+INTRODUCTORY_DEFAULT_CATEGORIES = [
+    CategoryConfig(category="Motivation", count=2, difficulty="easy", weight=0.30),
+    CategoryConfig(category="Werdegang", count=2, difficulty="medium", weight=0.30),
+    CategoryConfig(category="Staerken", count=1, difficulty="medium", weight=0.20),
+    CategoryConfig(category="Entwicklung", count=1, difficulty="medium", weight=0.20),
+]
+
 
 def validate_weights(categories: list[CategoryConfig]) -> list[CategoryConfig]:
     total_weight = sum(cat.weight for cat in categories)
@@ -51,10 +63,26 @@ def validate_weights(categories: list[CategoryConfig]) -> list[CategoryConfig]:
     return categories
 
 
+def _is_introductory_round(round_obj: InterviewRound) -> bool:
+    """Returns True if this round is the system-level introductory conversation round.
+    Detection is deterministic (by ID), not LLM-based, to avoid misinterpretation."""
+    return round_obj.id == SYSTEM_INTRODUCTORY_ROUND_ID
+
+
 @router.post("/generate-questions")
 def generate_questions(request: GenerateQuestionsRequest, db: Session = Depends(get_db)):
     """Generates interview questions via LangGraph multi-agent pipeline.
-    Also saves category settings to the round for later reuse."""
+
+    Detects introductory conversation rounds and routes to CV-only mode:
+    - Introductory mode: skips JD analysis, uses CV-based introductory prompts
+    - Standard mode: full JD + CV pipeline
+
+    After generation, a Quality Review Agent scores every question on 5 soft
+    criteria (1-10) plus an anti-discrimination pass/fail check (EU AI Act).
+    Failing questions are moved to `flagged_questions` for Human-in-the-Loop review.
+
+    Also saves category settings to the round for later reuse.
+    """
 
     round_obj = db.query(InterviewRound).filter(InterviewRound.id == request.interview_round_id).first()
     if not round_obj:
@@ -64,18 +92,40 @@ def generate_questions(request: GenerateQuestionsRequest, db: Session = Depends(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    categories = request.categories or [cat.model_copy() for cat in DEFAULT_CATEGORIES]
+    # Detect mode deterministically (by round ID, not LLM interpretation)
+    is_introductory = _is_introductory_round(round_obj)
+    interview_mode = "introductory" if is_introductory else "standard"
+
+    # Pick appropriate default categories if none provided
+    if request.categories:
+        categories = request.categories
+    elif is_introductory:
+        categories = [cat.model_copy() for cat in INTRODUCTORY_DEFAULT_CATEGORIES]
+    else:
+        categories = [cat.model_copy() for cat in DEFAULT_CATEGORIES]
+
     categories = validate_weights(categories)
 
     existing_questions = None
     if round_obj.questions:
         existing_questions = json.loads(round_obj.questions)
 
+    # JD doc_id only in standard mode; introductory skips JD analysis entirely
+    jd_doc_id = None
+    if not is_introductory:
+        if not round_obj.job_description:
+            raise HTTPException(
+                status_code=400,
+                detail="Standard round has no job description attached"
+            )
+        jd_doc_id = round_obj.job_description.doc_id
+
     result = run_interview_pipeline(
-        jd_doc_id=round_obj.job_description.doc_id,
+        jd_doc_id=jd_doc_id,
         cv_doc_id=candidate.doc_id,
         categories=[cat.model_dump() for cat in categories],
         existing_questions=existing_questions,
+        interview_mode=interview_mode,
     )
 
     weight_map = {cat.category.lower(): cat.weight for cat in categories}
@@ -94,6 +144,7 @@ def generate_questions(request: GenerateQuestionsRequest, db: Session = Depends(
         save_data = {
             "questions": questions,
             "category_settings": [cat.model_dump() for cat in categories],
+            "interview_mode": interview_mode,
         }
         round_obj.questions = json.dumps(save_data, ensure_ascii=False)
         db.commit()
@@ -102,11 +153,15 @@ def generate_questions(request: GenerateQuestionsRequest, db: Session = Depends(
         "interview_round_id": request.interview_round_id,
         "candidate_id": request.cv_id,
         "candidate_name": candidate.name,
+        "interview_mode": interview_mode,
         "category_weights": {cat.category: cat.weight for cat in categories},
         "total_questions": sum(cat.count for cat in categories),
+        "approved_count": len(questions),
+        "flagged_count": len(result.get("flagged_questions", [])),
         "jd_analysis": result.get("jd_analysis"),
         "cv_analysis": result.get("cv_analysis"),
         "questions": questions,
+        "flagged_questions": result.get("flagged_questions", []),
         "compliance": result.get("compliance", {}),
     }
 
@@ -123,8 +178,13 @@ def regenerate_one_question(request: RegenerateOneRequest, db: Session = Depends
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # For introductory rounds, no JD doc_id is passed
+    jd_doc_id = None
+    if not _is_introductory_round(round_obj) and round_obj.job_description:
+        jd_doc_id = round_obj.job_description.doc_id
+
     new_q = regenerate_single_question(
-        jd_doc_id=round_obj.job_description.doc_id,
+        jd_doc_id=jd_doc_id,
         cv_doc_id=candidate.doc_id,
         old_question=request.old_question,
         category=request.category,
@@ -138,6 +198,7 @@ def regenerate_one_question(request: RegenerateOneRequest, db: Session = Depends
 def get_default_categories():
     return {
         "categories": [cat.model_dump() for cat in DEFAULT_CATEGORIES],
+        "introductory_categories": [cat.model_dump() for cat in INTRODUCTORY_DEFAULT_CATEGORIES],
         "difficulty_options": ["easy", "medium", "hard"],
     }
 
@@ -151,4 +212,6 @@ def get_round_settings(round_id: str, db: Session = Depends(get_db)):
     if not round_obj.questions:
         return {"settings": None}
     data = json.loads(round_obj.questions)
-    return {"settings": data.get("category_settings")}
+    return {"settings": data.get("category_settings"), "interview_mode": data.get("interview_mode", "standard")}
+
+

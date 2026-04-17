@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Sparkles, ChevronDown, ChevronUp, Shield, Loader2, Plus, Trash2, RefreshCw, Download, Copy } from 'lucide-react'
+import { Sparkles, ChevronDown, ChevronUp, Shield, Loader2, Plus, Trash2, RefreshCw, Download, Copy, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { getJobDescriptions, getInterviewRounds, getCandidates, generateQuestions, getDefaultCategories, exportInterviewKit, regenerateQuestion, getRoundSettings } from '../services/api'
 
 function RubricDisplay({ rubric }) {
@@ -21,6 +21,43 @@ function RubricDisplay({ rubric }) {
               <span className="text-gray-600 leading-relaxed">{desc}</span>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ReviewDisplay({ review }) {
+  const [open, setOpen] = useState(false)
+  if (!review || !review.scores) return null
+  const avg = review.average_score
+  const scoreColor = avg >= 8 ? 'text-emerald-600' : avg >= 7 ? 'text-brand-600' : 'text-amber-600'
+  return (
+    <div className="mt-2">
+      <button onClick={() => setOpen(!open)} className="text-xs text-brand-500 hover:text-brand-700 flex items-center gap-1">
+        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        Quality Review: <span className={`font-medium ${scoreColor}`}>Ø {avg}/10</span> {open ? 'verbergen' : 'anzeigen'}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1.5 text-xs">
+          {Object.entries(review.scores).map(([k, v]) => (
+            <div key={k} className="flex justify-between gap-2">
+              <span className="text-gray-500 capitalize">{k.replace(/_/g, ' ')}</span>
+              <span className={`font-medium ${v >= 8 ? 'text-emerald-600' : v >= 7 ? 'text-brand-600' : 'text-amber-600'}`}>{v}/10</span>
+            </div>
+          ))}
+          <div className="flex justify-between gap-2 pt-1 border-t border-surface-200">
+            <span className="text-gray-500">Anti-Diskriminierung</span>
+            <span className={`font-medium ${review.anti_discrimination_check === 'pass' ? 'text-emerald-600' : 'text-red-600'}`}>
+              {review.anti_discrimination_check === 'pass' ? '✓ Pass' : '✗ Fail'}
+            </span>
+          </div>
+          {review.retry_attempts > 0 && (
+            <p className="text-gray-400 pt-1">Nach {review.retry_attempts} Retry{review.retry_attempts > 1 ? 's' : ''} akzeptiert</p>
+          )}
+          {review.reasoning && (
+            <p className="text-gray-500 pt-1 italic">{review.reasoning}</p>
+          )}
         </div>
       )}
     </div>
@@ -92,6 +129,14 @@ export default function InterviewKit() {
 
   const handleDownload = () => { if (selectedRound) window.open(exportInterviewKit(selectedRound), '_blank') }
 
+  const isIntroductory = result?.interview_mode === 'introductory'
+  const pipelineLabel = isIntroductory
+    ? 'Intro Passthrough → CV Agent → Question Agent → Quality Review'
+    : 'JD Agent → CV Agent → Question Agent → Quality Review'
+
+  const flaggedQuestions = result?.flagged_questions || []
+  const hasFlagged = flaggedQuestions.length > 0
+
   return (
     <div>
       <h2 className="text-2xl font-bold text-gray-800 mb-1">Interview Kit</h2>
@@ -111,7 +156,7 @@ export default function InterviewKit() {
               <label className="text-xs text-gray-500 mb-1 block">Interview Round</label>
               <select value={selectedRound} onChange={e => { setSelectedRound(e.target.value); setSelectedCandidate('') }} className="w-full border border-surface-200 rounded-xl px-3 py-2 text-sm bg-white" disabled={!selectedJd}>
                 <option value="">Wählen...</option>
-                {rounds.map(r => <option key={r.id} value={r.id}>{r.title} {r.has_questions ? '(Fragen vorhanden)' : ''}</option>)}
+                {rounds.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}
               </select>
             </div>
             <div>
@@ -168,18 +213,62 @@ export default function InterviewKit() {
             <div className="bg-white/80 backdrop-blur rounded-2xl border border-white/50 p-10 text-center shadow-sm">
               <Loader2 size={36} className="animate-spin text-brand-500 mx-auto mb-4" />
               <p className="text-sm text-gray-500">Multi-Agent Pipeline läuft...</p>
-              <p className="text-xs text-gray-400 mt-1">JD Agent → CV Agent → Question Agent</p>
-              <p className="text-xs text-gray-400 mt-0.5">Dauert ca. 15–25 Sekunden</p>
+              <p className="text-xs text-gray-400 mt-1">JD Agent → CV Agent → Question Agent → Quality Review</p>
+              <p className="text-xs text-gray-400 mt-0.5">Dauert ca. 20–35 Sekunden (Quality Review mit Retries)</p>
             </div>
           )}
 
           {result && !loading && (
             <div className="space-y-4">
+              {/* Quality Summary Bar */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 size={12} /> {result.approved_count ?? result.questions?.length ?? 0} approved
+                </span>
+                {hasFlagged && (
+                  <span className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                    <AlertTriangle size={12} /> {flaggedQuestions.length} zur Pruefung markiert
+                  </span>
+                )}
+                <span className="text-xs text-gray-400">{pipelineLabel}</span>
+              </div>
+
+              {/* Flagged Questions Panel (Human-in-the-Loop) */}
+              {hasFlagged && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle size={18} className="text-amber-600" />
+                    <h3 className="text-sm font-medium text-amber-800">Human-in-the-Loop: Zu pruefende Fragen</h3>
+                  </div>
+                  <p className="text-xs text-amber-700 mb-4">
+                    Diese Fragen wurden vom Quality Review Agent automatisch aussortiert und erreichen den Recruiter nicht im Hauptkit. Pruefen Sie jede Frage manuell, bevor Sie sie verwenden (EU AI Act Art. 14 – Human Oversight).
+                  </p>
+                  <div className="space-y-3">
+                    {flaggedQuestions.map((q, i) => (
+                      <div key={i} className="border border-amber-200 rounded-xl p-4 bg-white/60">
+                        <div className="flex items-start justify-between gap-3 mb-2">
+                          <p className="text-sm text-gray-800 font-medium flex-1">
+                            <span className="text-amber-500 mr-2">⚠ F</span>{q.question}
+                          </p>
+                          <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${DIFF_COLORS[q.difficulty] || 'bg-gray-100 text-gray-600'}`}>{q.difficulty}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{q.category}</span>
+                          <span className="text-xs text-amber-700 font-medium">Grund: {q.flag_reason}</span>
+                        </div>
+                        <ReviewDisplay review={q.review} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Main Kit */}
               <div className="bg-white/80 backdrop-blur rounded-2xl border border-white/50 p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="font-medium text-gray-800">Interview Kit: {result.candidate_name}</h3>
-                    <p className="text-xs text-gray-400">{result.total_questions} Fragen · Klick auf eine Frage zum Austauschen</p>
+                    <p className="text-xs text-gray-400">{result.approved_count ?? result.questions?.length ?? 0} Fragen · Klick auf eine Frage zum Austauschen</p>
                   </div>
                   <div className="flex gap-2">
                     <button onClick={handleGenerate} disabled={loading} className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-surface-200 rounded-lg text-gray-600 hover:bg-surface-100 transition-colors"><RefreshCw size={13} /> Alle neu</button>
@@ -216,6 +305,7 @@ export default function InterviewKit() {
                           {weight !== null && <span className="text-xs text-gray-400">Gewichtung: {(weight * 100).toFixed(0)}%</span>}
                         </div>
                         <RubricDisplay rubric={q.rubric} />
+                        <ReviewDisplay review={q.review} />
                       </div>
                     )
                   })}
@@ -226,13 +316,17 @@ export default function InterviewKit() {
                 <div className="bg-brand-50 border border-brand-200 rounded-2xl p-4">
                   <div className="flex items-center gap-2 mb-2"><Shield size={16} className="text-brand-600" /><span className="text-xs font-medium text-brand-700">EU AI Act Compliance</span></div>
                   <p className="text-xs text-brand-600">{result.compliance.human_oversight_disclaimer}</p>
-                  <p className="text-xs text-gray-500 mt-2">Model: {result.compliance.audit?.model_used} · Langfuse: {result.compliance.audit?.langfuse_traced ? 'Yes' : 'No'} · PII anonymized: {result.compliance.audit?.pii_anonymized ? 'Yes' : 'No'}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Model: {result.compliance.audit?.model_used} · Pipeline: {result.compliance.audit?.agents_executed?.length || 4} Agents · Langfuse: {result.compliance.audit?.langfuse_traced ? 'Yes' : 'No'} · PII anonymized: {result.compliance.audit?.pii_anonymized ? 'Yes' : 'No'} · HITL active: {result.compliance.ai_act_metadata?.human_in_the_loop_active ? 'Yes' : 'No'}
+                  </p>
                 </div>
               )}
 
               {result.jd_analysis && (
                 <details className="bg-white/80 backdrop-blur rounded-2xl border border-white/50 p-5 shadow-sm">
-                  <summary className="text-sm font-medium text-gray-600 cursor-pointer">JD-Analyse (Agent 1)</summary>
+                  <summary className="text-sm font-medium text-gray-600 cursor-pointer">
+                    {isIntroductory ? 'Intro Passthrough (Agent 1 – deterministisch)' : 'JD-Analyse (Agent 1)'}
+                  </summary>
                   <pre className="mt-3 text-xs text-gray-500 overflow-auto whitespace-pre-wrap">{JSON.stringify(result.jd_analysis, null, 2)}</pre>
                 </details>
               )}
@@ -257,3 +351,5 @@ export default function InterviewKit() {
     </div>
   )
 }
+
+
