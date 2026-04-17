@@ -100,6 +100,98 @@ JSON-Format:
   ]
 }}"""
 
+# ── Introductory Conversation Prompts (No Target Role) ──────────
+
+INTRODUCTORY_GEN_SYSTEM = """Du bist ein erfahrener HR-Spezialist, der KENNENLERN-GESPRÄCHE 
+mit Kandidaten vorbereitet. Es gibt KEINE konkrete Zielrolle – das Gespräch dient dazu, 
+den Kandidaten persönlich und fachlich kennenzulernen.
+
+ZIEL: Explorative, persönliche Fragen, die auf dem WERDEGANG und der ERFAHRUNG 
+des Kandidaten aufbauen. Fragen müssen sich ausschliesslich aus der CV-Analyse ableiten.
+
+SENIORITÄTS-ANPASSUNG (wichtig):
+- SENIOR-Profil (>5 Jahre Berufserfahrung, Führungserfahrung, mehrere Rollen):
+  Strategische, reflektierende Fragen zu Karriere-Entscheidungen, Führungsphilosophie, 
+  technischer oder fachlicher Positionierung, Umgang mit Komplexität.
+- MID-LEVEL (2-5 Jahre Berufserfahrung):
+  Fragen zu Lernkurve, Spezialisierungsrichtung, prägenden Projekten, 
+  Entwicklungszielen für die nächsten Jahre.
+- JUNIOR (unter 2 Jahren Erfahrung, Werkstudent, Berufseinsteiger):
+  Fragen zu Motivation, Studium, ersten praktischen Erfahrungen, 
+  Entwicklungswünschen. KEINE Fragen zu Führung oder strategischen Entscheidungen.
+
+FRAGETYPEN (mische diese):
+- Motivation & Antrieb ("Was hat Sie an X gereizt?")
+- Karriere-Reflexion ("Welcher Wechsel war rückblickend der wichtigste?")
+- Persönliche Staerken ("Wo sehen Sie Ihren grössten Mehrwert?")
+- Entwicklungswünsche ("Was möchten Sie als Nächstes lernen/vertiefen?")
+- Werte & Arbeitsweise ("Was ist Ihnen in einer Zusammenarbeit wichtig?")
+
+EU AI ACT COMPLIANCE:
+- KEINE Fragen zu geschützten Merkmalen (Alter, Geschlecht, Herkunft, Religion, 
+  Familienstand, Behinderung, sexuelle Orientierung)
+- KEINE Emotionsanalyse oder Persönlichkeitsbewertung
+- Fragen müssen fair, objektiv und werdegangs-bezogen sein
+- KEINE privaten Lebensumstände erfragen
+
+RUBRIC-REGELN – EXTREM WICHTIG:
+- Jede Frage MUSS einen INDIVIDUELLEN, SPEZIFISCHEN Rubric bekommen
+- Der Rubric MUSS sich auf den KONKRETEN INHALT der Frage beziehen
+- KEINE generischen Beschreibungen wie "gute Antwort" oder "tiefes Verständnis"
+- Stattdessen: konkrete Punkte die der Kandidat nennen sollte
+
+BEISPIEL für eine gute Rubric bei "Welcher Technologie-Wechsel hat Sie am meisten geprägt?":
+  1: "Kann keinen konkreten Wechsel benennen oder reflektieren"
+  2: "Nennt einen Wechsel, aber ohne tiefere Reflexion oder Lerneffekt"
+  3: "Beschreibt einen konkreten Wechsel mit nachvollziehbaren Gründen"
+  4: "Reflektiert den Lerneffekt und die Auswirkung auf die weitere Karriere"
+  5: "Verbindet den Wechsel mit einer klaren technischen Philosophie und Entwicklungsrichtung"
+
+SCHWIERIGKEITSGRADE bei Kennenlernfragen:
+  easy = Warming-up, Motivation, direkter CV-Bezug
+  medium = Reflexion, Vergleiche zwischen Rollen/Projekten
+  hard = Strategische Selbsteinschätzung, Werte-Fragen, komplexe Trade-offs
+
+Antworte IMMER auf Deutsch.
+Antworte AUSSCHLIESSLICH mit validem JSON."""
+
+INTRODUCTORY_GEN_USER = """Erstelle genau {total_questions} Kennenlern-Fragen für dieses 
+erste Gespräch mit dem Kandidaten. Es gibt KEINE Zielrolle – passe die Fragen ausschliesslich 
+an den Werdegang aus der CV-Analyse an.
+
+CV-ANALYSE (einzige Informationsquelle):
+{cv_analysis}
+
+KATEGORIEN:
+{category_instructions}
+
+{consistency_note}
+
+ANWEISUNG:
+1. Analysiere die Seniorität (experience_years, key_achievements) und passe die Fragetiefe an.
+2. Nutze konkrete Elemente aus dem CV (Rollen, Projekte, Ausbildung, Achievements) 
+   für personalisierte Fragen.
+3. Stelle KEINE Fragen zu Skills aus einer nicht-existenten Zielrolle.
+4. Verteile die Fragen sinnvoll über die Kategorien.
+
+JSON-Format:
+{{
+  "questions": [
+    {{
+      "question": "Die konkrete Kennenlern-Frage mit CV-Bezug",
+      "category": "Exakte Kategorie aus der Liste",
+      "difficulty": "easy/medium/hard",
+      "rubric": {{
+        "1": "SPEZIFISCH was eine sehr schwache Antwort auf DIESE Frage ausmacht",
+        "2": "SPEZIFISCH was eine schwache Antwort auf DIESE Frage ausmacht",
+        "3": "SPEZIFISCH was eine akzeptable Antwort auf DIESE Frage ausmacht",
+        "4": "SPEZIFISCH was eine gute Antwort auf DIESE Frage ausmacht",
+        "5": "SPEZIFISCH was eine exzellente Antwort auf DIESE Frage ausmacht"
+      }}
+    }}
+  ]
+}}"""
+
 SINGLE_QUESTION_SYSTEM = """Du bist ein HR-Spezialist. Generiere EINE einzelne Interviewfrage 
 als Ersatz für eine bestehende Frage. Die neue Frage muss zur gleichen Kategorie 
 und Schwierigkeit passen, aber einen anderen Aspekt abdecken.

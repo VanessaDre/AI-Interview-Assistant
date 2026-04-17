@@ -9,16 +9,32 @@ export const uploadJD = (file, title, company) => {
   fd.append('company', company)
   return api.post('/upload/job-description', fd)
 }
-export const uploadCV = (file, candidateName, interviewRoundId) => {
+
+export const uploadCV = (file, candidateName, interviewRoundId = null) => {
   const fd = new FormData()
   fd.append('file', file)
   fd.append('candidate_name', candidateName)
-  fd.append('interview_round_id', interviewRoundId)
+  if (interviewRoundId) {
+    fd.append('interview_round_id', interviewRoundId)
+  }
   return api.post('/upload/cv', fd)
 }
-export const createRound = (title, jobDescriptionId) => api.post('/interview-rounds', { title, job_description_id: jobDescriptionId })
-export const generateQuestions = (interviewRoundId, cvId, categories = null) => api.post('/generate-questions', { interview_round_id: interviewRoundId, cv_id: cvId, categories })
-export const regenerateQuestion = (interviewRoundId, cvId, questionIndex, oldQuestion, category, difficulty) => api.post('/regenerate-question', { interview_round_id: interviewRoundId, cv_id: cvId, question_index: questionIndex, old_question: oldQuestion, category, difficulty })
+
+export const assignCandidateToRound = (candidateId, roundId) =>
+  api.post(`/candidates/${candidateId}/assign/${roundId}`)
+
+export const unassignCandidateFromRound = (candidateId, roundId) =>
+  api.delete(`/candidates/${candidateId}/assign/${roundId}`)
+
+export const createRound = (title, jobDescriptionId) =>
+  api.post('/interview-rounds', { title, job_description_id: jobDescriptionId })
+
+export const generateQuestions = (interviewRoundId, cvId, categories = null) =>
+  api.post('/generate-questions', { interview_round_id: interviewRoundId, cv_id: cvId, categories })
+
+export const regenerateQuestion = (interviewRoundId, cvId, questionIndex, oldQuestion, category, difficulty) =>
+  api.post('/regenerate-question', { interview_round_id: interviewRoundId, cv_id: cvId, question_index: questionIndex, old_question: oldQuestion, category, difficulty })
+
 export const getJobDescriptions = () => api.get('/job-descriptions')
 export const getInterviewRounds = (jdId = null) => api.get('/interview-rounds', { params: jdId ? { job_description_id: jdId } : {} })
 export const getCandidates = (roundId = null) => api.get('/candidates', { params: roundId ? { interview_round_id: roundId } : {} })
@@ -36,4 +52,5 @@ export const healthCheck = () => api.get('/health', { baseURL: 'http://127.0.0.1
 export const getJdPdfUrl = (jdId) => `http://127.0.0.1:8000/api/job-descriptions/${jdId}/pdf`
 export const getCvPdfUrl = (candidateId) => `http://127.0.0.1:8000/api/candidates/${candidateId}/pdf`
 export const exportInterviewKit = (roundId) => `http://127.0.0.1:8000/api/export/interview-kit/${roundId}`
+
 export default api

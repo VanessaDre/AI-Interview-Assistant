@@ -9,7 +9,7 @@ from backend.routes.delete import router as delete_router
 from backend.routes.compliance import router as compliance_router
 from backend.routes.export import router as export_router
 from backend.services import langfuse_service
-from backend.database import create_tables
+from backend.database import create_tables, seed_system_data
 import os
 
 load_dotenv()
@@ -18,6 +18,7 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
+    seed_system_data()
     yield
     langfuse_service.flush()
 

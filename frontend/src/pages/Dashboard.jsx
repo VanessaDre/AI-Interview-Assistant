@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Activity, FileText, Users, CheckCircle, AlertCircle, Trash2, Eye, X, ChevronDown, ChevronRight, Download, Sparkles } from 'lucide-react'
+import { Activity, FileText, Users, UserPlus, CheckCircle, AlertCircle, Trash2, Eye, X, ChevronDown, ChevronRight, Download, Sparkles } from 'lucide-react'
 import { healthCheck, getJobDescriptions, getCandidates, getInterviewRounds, deleteJobDescription, deleteCandidate, deleteRound, deleteRoundQuestions, getJdPdfUrl, getCvPdfUrl, getRoundQuestions, exportInterviewKit } from '../services/api'
+
+const SYSTEM_PROTECTED_JD_IDS = ['SYSTEM_KENNENLERN_DEFAULT']
+const SYSTEM_PROTECTED_ROUND_IDS = ['SYSTEM_KENNENLERN_ROUND_DEFAULT']
 
 function PdfModal({ url, title, onClose }) {
   if (!url) return null
@@ -63,7 +66,7 @@ export default function Dashboard() {
   useEffect(load, [])
 
   const handleDeleteJd = async (id, title) => {
-    if (!confirm(`"${title}" und ALLE verknuepften Rounds + CVs loeschen?`)) return
+    if (!confirm(`"${title}" und ALLE verknuepften Rounds loeschen? Kandidaten bleiben erhalten.`)) return
     await deleteJobDescription(id); load()
   }
   const handleDeleteCandidate = async (id, name) => {
@@ -71,7 +74,7 @@ export default function Dashboard() {
     await deleteCandidate(id); load()
   }
   const handleDeleteRound = async (roundId, title) => {
-    if (!confirm(`Round "${title}" und alle CVs darin komplett loeschen?`)) return
+    if (!confirm(`Round "${title}" loeschen? Kandidaten bleiben erhalten.`)) return
     await deleteRound(roundId); load()
   }
   const handleDeleteQuestions = async (roundId, title) => {
@@ -97,10 +100,15 @@ export default function Dashboard() {
     setShowQuestionsFor(roundId)
   }
 
+  // 4-table schema: ALL candidates are permanently in the talent pool.
+  // "newInPool" = candidates never assigned to any round yet (for the "new arrivals" metric)
+  const newInPool = allCandidates.filter(c => c.is_unassigned)
+
   const cards = [
     { label: 'Job Descriptions', value: jds.length, icon: FileText, color: 'text-brand-500' },
     { label: 'Interview Rounds', value: rounds.length, icon: Activity, color: 'text-violet-500' },
-    { label: 'Kandidaten', value: allCandidates.length, icon: Users, color: 'text-purple-500' },
+    { label: 'Talent Pool', value: allCandidates.length, icon: Users, color: 'text-purple-500' },
+    { label: 'Neu im Pool', value: newInPool.length, icon: UserPlus, color: 'text-pink-500' },
   ]
 
   return (
@@ -108,7 +116,7 @@ export default function Dashboard() {
       <h2 className="text-2xl font-bold text-gray-800 mb-1">Dashboard</h2>
       <p className="text-sm text-gray-400 mb-6">Multi-Agent Interview System</p>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {cards.map(c => (
           <div key={c.label} className="bg-white/80 backdrop-blur rounded-2xl border border-white/50 p-5 shadow-sm">
             <div className="flex items-center justify-between mb-2">
@@ -130,18 +138,32 @@ export default function Dashboard() {
           {jdsOpen && (
             <div className="space-y-2">
               {jds.length === 0 ? <p className="text-xs text-gray-400">Noch keine JDs</p> :
-                jds.map(jd => (
-                  <div key={jd.id} className="flex items-center justify-between p-3 bg-surface-50 rounded-xl">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">{jd.title}</p>
-                      <p className="text-xs text-gray-400">{jd.company}</p>
+                jds.map(jd => {
+                  const isSystemJd = SYSTEM_PROTECTED_JD_IDS.includes(jd.id)
+                  return (
+                    <div key={jd.id} className="flex items-center justify-between p-3 bg-surface-50 rounded-xl gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-700 truncate">{jd.title}</p>
+                          {isSystemJd && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">System</span>
+                          )}
+                        </div>
+                        {!isSystemJd && (
+                          <p className="text-xs text-gray-400 truncate">{jd.company}</p>
+                        )}
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        {!isSystemJd && (
+                          <button onClick={() => setPdfModal({ url: getJdPdfUrl(jd.id), title: jd.title })} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="PDF ansehen"><Eye size={15} /></button>
+                        )}
+                        {!isSystemJd && (
+                          <button onClick={() => handleDeleteJd(jd.id, jd.title)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Loeschen"><Trash2 size={15} /></button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => setPdfModal({ url: getJdPdfUrl(jd.id), title: jd.title })} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="PDF ansehen"><Eye size={15} /></button>
-                      <button onClick={() => handleDeleteJd(jd.id, jd.title)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Loeschen"><Trash2 size={15} /></button>
-                    </div>
-                  </div>
-                ))
+                  )
+                })
               }
             </div>
           )}
@@ -150,7 +172,7 @@ export default function Dashboard() {
         <div className="bg-white/80 backdrop-blur rounded-2xl border border-white/50 p-5 shadow-sm">
           <button onClick={() => setCandidatesOpen(!candidatesOpen)} className="flex items-center gap-2 w-full text-left mb-3">
             {candidatesOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
-            <h3 className="text-sm font-medium text-gray-600">Kandidaten</h3>
+            <h3 className="text-sm font-medium text-gray-600">Talent Pool</h3>
             <span className="text-xs text-gray-400 ml-auto">{allCandidates.length}</span>
           </button>
           {candidatesOpen && (
@@ -158,11 +180,21 @@ export default function Dashboard() {
               {allCandidates.length === 0 ? <p className="text-xs text-gray-400">Noch keine Kandidaten</p> :
                 allCandidates.map(c => (
                   <div key={c.id} className="flex items-center justify-between p-3 bg-surface-50 rounded-xl">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">{c.name}</p>
-                      <p className="text-xs text-gray-400">{new Date(c.created_at).toLocaleDateString('de-DE')}</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-700 truncate">{c.name}</p>
+                        {c.is_unassigned && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-600 font-medium shrink-0">Neu im Pool</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        {new Date(c.created_at).toLocaleDateString('de-DE')}
+                        {c.assigned_rounds && c.assigned_rounds.length > 0 && (
+                          <span> · {c.assigned_rounds.map(r => r.title).join(', ')}</span>
+                        )}
+                      </p>
                     </div>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 shrink-0">
                       <button onClick={() => setPdfModal({ url: getCvPdfUrl(c.id), title: `CV: ${c.name}` })} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="CV ansehen"><Eye size={15} /></button>
                       <button onClick={() => handleDeleteCandidate(c.id, c.name)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Loeschen"><Trash2 size={15} /></button>
                     </div>
@@ -184,18 +216,26 @@ export default function Dashboard() {
           <div className="space-y-2">
             {rounds.length === 0 ? <p className="text-xs text-gray-400">Noch keine Rounds</p> :
               rounds.map(r => {
-                const rCandidates = allCandidates.filter(c => c.interview_round_id === r.id)
+                const rCandidates = allCandidates.filter(c =>
+                  c.assigned_rounds && c.assigned_rounds.some(ar => ar.id === r.id)
+                )
                 const jd = jds.find(j => j.id === r.job_description_id)
                 const isOpen = openRoundId === r.id
                 const questions = roundQuestions[r.id] || []
                 const isQOpen = showQuestionsFor === r.id
+                const isSystemRound = SYSTEM_PROTECTED_ROUND_IDS.includes(r.id)
                 return (
                   <div key={r.id} className="rounded-xl border border-surface-200 overflow-hidden">
                     <div className="flex items-center justify-between p-3 bg-surface-50">
                       <button onClick={() => toggleRound(r.id)} className="flex items-center gap-1.5 text-left flex-1">
                         {isOpen ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
                         <div>
-                          <p className="text-sm font-medium text-gray-700">{r.title}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-gray-700">{r.title}</p>
+                            {isSystemRound && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">System</span>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-400">{jd?.title || ''} · {rCandidates.length} Kandidaten · {r.has_questions ? 'Fragen vorhanden' : 'Keine Fragen'}</p>
                         </div>
                       </button>
@@ -203,7 +243,9 @@ export default function Dashboard() {
                         {r.has_questions && (
                           <button onClick={() => window.open(exportInterviewKit(r.id), '_blank')} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="DOCX Export"><Download size={15} /></button>
                         )}
-                        <button onClick={() => handleDeleteRound(r.id, r.title)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Round loeschen"><Trash2 size={15} /></button>
+                        {!isSystemRound && (
+                          <button onClick={() => handleDeleteRound(r.id, r.title)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Round loeschen"><Trash2 size={15} /></button>
+                        )}
                       </div>
                     </div>
                     {isOpen && (
