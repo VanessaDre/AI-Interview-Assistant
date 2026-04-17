@@ -5,6 +5,8 @@ openai
 langchain
 langchain-openai
 langchain-community
+langgraph
+langfuse
 chromadb
 pdfplumber
 pydantic

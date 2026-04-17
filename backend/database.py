@@ -31,9 +31,9 @@ class InterviewRound(Base):
     __tablename__ = "interview_rounds"
 
     id = Column(String, primary_key=True)
-    title = Column(String, nullable=False)        # e.g. "Python Dev - Januar 2026"
+    title = Column(String, nullable=False)
     job_description_id = Column(String, ForeignKey("job_descriptions.id"), nullable=False)
-    questions = Column(Text, nullable=True)        # JSON string – generated once
+    questions = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     job_description = relationship("JobDescription", back_populates="interview_rounds")
@@ -58,7 +58,6 @@ class Candidate(Base):
 
 
 def get_db():
-    """Dependency – returns a DB session"""
     db = SessionLocal()
     try:
         yield db
@@ -67,5 +66,4 @@ def get_db():
 
 
 def create_tables():
-    """Creates all tables in the database"""
     Base.metadata.create_all(bind=engine)
