@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 python-dotenv
+python-multipart
 openai
 langchain
 langchain-openai
@@ -11,4 +12,5 @@ chromadb
 pdfplumber
 pydantic
 sqlalchemy
-python-multipart
+slowapi
+tiktoken
