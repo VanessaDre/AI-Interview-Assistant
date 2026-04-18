@@ -39,38 +39,38 @@ Upload a Job Description (PDF) and a candidate's CV (PDF). A 4-agent pipeline an
 
 Clone the repository:
 
-```bash
+​```bash
 git clone git@github.com:YOUR-USERNAME/AI-interview-assistant.git
 cd AI-interview-assistant
-```
+​```
 
 Create virtual environment and install backend dependencies:
 
-```bash
+​```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
+​```
 
 Install frontend dependencies:
 
-```bash
+​```bash
 cd frontend
 npm install
 cd ..
-```
+​```
 
 Install Node.js DOCX library (from project root):
 
-```bash
+​```bash
 npm install docx
-```
+​```
 
 ### Environment Variables
 
 Create a `.env` file in the project root:
 
-```
+​```
 OPENAI_API_KEY=your-openai-key
 ADMIN_API_KEY=your-admin-key
 
@@ -78,22 +78,22 @@ ADMIN_API_KEY=your-admin-key
 LANGFUSE_PUBLIC_KEY=your-public-key
 LANGFUSE_SECRET_KEY=your-secret-key
 LANGFUSE_HOST=https://cloud.langfuse.com
-```
+​```
 
 ### Run
 
 Backend (Terminal 1):
 
-```bash
+​```bash
 uvicorn backend.main:app --reload
-```
+​```
 
 Frontend (Terminal 2):
 
-```bash
+​```bash
 cd frontend
 npm run dev
-```
+​```
 
 Open `http://localhost:5173` in your browser.
 
@@ -138,9 +138,3 @@ Open `http://localhost:5173` in your browser.
 - Alembic schema migrations
 - Automated test suite
 - Docker Compose setup
-
----
-
-## License
-
-MIT
