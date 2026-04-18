@@ -268,13 +268,59 @@ def list_job_descriptions(db: Session = Depends(get_db)):
 
 @router.get("/job-descriptions/{jd_id}/pdf")
 def get_jd_pdf(jd_id: str, db: Session = Depends(get_db)):
-    """Serve the original JD PDF for viewing."""
+    """Serve the original JD PDF for viewing.
+
+    System-level JDs (like the generic 'Kennenlerngespraech') are virtual —
+    they were seeded directly into the database without an underlying PDF file.
+    In that case we return a clean 404 with an explanatory message instead of
+    crashing on os.path.exists with an empty or None file_path.
+    """
     jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
     if not jd:
         raise HTTPException(status_code=404, detail="Job Description not found")
+    if not jd.file_path:
+        raise HTTPException(
+            status_code=404,
+            detail="This Job Description is system-generated and has no PDF attachment.",
+        )
     if not os.path.exists(jd.file_path):
         raise HTTPException(status_code=404, detail="PDF file not found")
     return FileResponse(jd.file_path, media_type="application/pdf")
+
+
+@router.get("/job-descriptions/{jd_id}/content")
+def get_jd_content(jd_id: str, db: Session = Depends(get_db)):
+    """Serves the text content of a Job Description.
+
+    Primarily meant for system-level JDs without a PDF file (e.g. the
+    generic 'Kennenlerngespraech'). For regular JDs the PDF endpoint
+    is used instead. Returns a lightweight JSON with title, company
+    and the actual text used for question generation, so the recruiter
+    can see on what basis the questions are being derived.
+    """
+    from backend.services.rag_service import chroma_client
+
+    jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
+    if not jd:
+        raise HTTPException(status_code=404, detail="Job Description not found")
+
+    # Fetch stored chunks from ChromaDB and re-assemble the document
+    try:
+        collection = chroma_client.get_or_create_collection(name="interview_docs")
+        results = collection.get(where={"doc_id": jd.doc_id})
+        chunks = results.get("documents", []) or []
+        content = "\n\n".join(chunks) if chunks else ""
+    except Exception as e:
+        logger.warning(f"Could not load content for JD {jd_id}: {e}")
+        content = ""
+
+    return {
+        "id": jd.id,
+        "title": jd.title,
+        "company": jd.company,
+        "is_system": not bool(jd.file_path),
+        "content": content,
+    }
 
 
 @router.get("/candidates/{candidate_id}/pdf")
@@ -329,3 +375,4 @@ def list_candidates(interview_round_id: str = None, db: Session = Depends(get_db
         }
         for c in candidates
     ]
+

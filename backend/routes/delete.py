@@ -10,14 +10,40 @@ SYSTEM_PROTECTED_JD_IDS = {"SYSTEM_KENNENLERN_DEFAULT"}
 SYSTEM_PROTECTED_ROUND_IDS = {"SYSTEM_KENNENLERN_ROUND_DEFAULT"}
 
 
+def _clear_questions_in_rounds(rounds: list) -> None:
+    """Clears stale question kits from the given rounds.
+
+    Questions are always candidate-specific — they are generated from a
+    specific CV and contain references to that candidate's work history,
+    skills, and achievements. Once the candidate is removed (DSGVO Art. 17),
+    those questions have no legitimate owner and must not remain visible.
+
+    This also fixes the system-level Kennenlern-Round: that round cannot
+    itself be deleted, but must be cleared when its last candidate is removed,
+    otherwise the dashboard keeps showing orphaned questions.
+    """
+    for round_obj in rounds:
+        round_obj.questions = None
+
+
 @router.delete("/candidates/{candidate_id}")
 def delete_candidate(candidate_id: str, db: Session = Depends(get_db)):
     """Deletes a candidate completely (DSGVO Art. 17).
     All assignments in candidate_rounds are removed automatically via cascade.
-    Interview rounds and job descriptions are not affected."""
+    Interview rounds and job descriptions are not affected.
+
+    Stale question kits are cleared from all rounds this candidate was
+    assigned to, because those questions were generated from this specific CV.
+    """
     candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
+
+    # Clear candidate-derived artefacts in all rounds (DSGVO-compliant cleanup).
+    # Note: relationship on the Candidate side is named `interview_rounds`
+    # (see database.py — many-to-many via candidate_rounds join table).
+    _clear_questions_in_rounds(list(candidate.interview_rounds))
+
     delete_document(doc_id=candidate.doc_id)
     if candidate.file_path and os.path.exists(candidate.file_path):
         os.remove(candidate.file_path)
@@ -30,12 +56,17 @@ def delete_candidate(candidate_id: str, db: Session = Depends(get_db)):
 def unassign_all_candidates_from_round(round_id: str, db: Session = Depends(get_db)):
     """Removes ALL candidate assignments from a round.
     The candidates themselves stay in the system (Talent Pool).
-    The round stays, only the links in candidate_rounds are removed."""
+    The round stays, only the links in candidate_rounds are removed.
+
+    The round's questions field is also cleared, because those questions
+    were generated for a specific candidate that is no longer in this round.
+    """
     round_obj = db.query(InterviewRound).filter(InterviewRound.id == round_id).first()
     if not round_obj:
         raise HTTPException(status_code=404, detail="Interview Round not found")
     unassigned_names = [c.name for c in round_obj.candidates]
     round_obj.candidates = []
+    round_obj.questions = None  # Stale after unassigning all candidates
     db.commit()
     return {
         "message": f"All candidate assignments removed from round '{round_obj.title}'",

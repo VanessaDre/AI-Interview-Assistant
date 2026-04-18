@@ -2,7 +2,7 @@
 
 Architecture:
   JD Agent → analyzes job description via RAG + LLM
-  CV Agent → analyzes anonymized CV via RAG + LLM
+  CV Agent → analyzes anonymized CV via RAG + LLM (multi-facet retrieval)
   Question Agent → generates interview kit from both analyses
   Quality Review Agent → scores questions, flags discriminatory ones for HITL
   Introductory Passthrough → deterministic placeholder for CV-only mode
@@ -10,7 +10,16 @@ Architecture:
 All agents are traced via Langfuse for observability.
 """
 
-from openai import OpenAI
+# Langfuse v4 drop-in wrapper: identical to `from openai import OpenAI`,
+# but auto-logs model, token usage and cost for every chat.completions.create call.
+# Falls back to stock OpenAI if Langfuse keys are missing, so local dev still works.
+from backend.services.langfuse_service import is_enabled as _langfuse_enabled
+
+if _langfuse_enabled():
+    from langfuse.openai import OpenAI
+else:
+    from openai import OpenAI
+
 from backend.services.rag_service import retrieve_relevant_chunks
 from backend.services.langfuse_service import trace_agent
 from backend.prompts.templates import (
@@ -34,6 +43,20 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ── Quality Review Thresholds ───────────────────────────────
 QUALITY_SCORE_THRESHOLD = 7.0  # Average of 5 soft criteria must be >= this
 MAX_RETRIES_PER_QUESTION = 2  # Max automatic regeneration attempts
+
+# ── CV Retrieval Configuration ──────────────────────────────
+# Multi-facet queries ensure each recruiter-screening dimension is represented
+# in the retrieved context. Without this, narrow semantic queries miss content
+# like languages or certifications that may not cluster near "experience".
+CV_RETRIEVAL_FACETS = [
+    "work experience roles positions companies career history",
+    "hard skills technologies tools programming frameworks",
+    "soft skills leadership communication teamwork collaboration",
+    "languages spoken German English French Spanish fluency level",
+    "certifications licenses credentials training courses",
+    "education degree university bachelor master diploma",
+]
+CV_CHUNKS_PER_FACET = 2  # up to 12 chunks total, deduplicated before LLM call
 
 
 def _call_openai(system: str, user: str, max_tokens: int = 2000) -> str:
@@ -60,6 +83,34 @@ def _parse_json(raw: str) -> dict:
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
     return json.loads(cleaned)
+
+
+def _retrieve_cv_context_multi_facet(cv_doc_id: str) -> str:
+    """Retrieves CV context across multiple semantic dimensions.
+
+    Issues one ChromaDB query per facet (work experience, hard skills,
+    soft skills, languages, certifications, education) and merges the
+    results with deduplication. This avoids the single-query blind spot
+    where niche dimensions like languages or certifications may not be
+    retrieved at all if they do not cluster near the query vector.
+    """
+    seen_chunks: set[str] = set()
+    unique_chunks: list[str] = []
+
+    for query in CV_RETRIEVAL_FACETS:
+        chunks_text = retrieve_relevant_chunks(
+            query=query,
+            doc_id=cv_doc_id,
+            n_results=CV_CHUNKS_PER_FACET,
+        )
+        # retrieve_relevant_chunks returns a "\n\n"-joined string; split and dedupe
+        for chunk in chunks_text.split("\n\n"):
+            chunk_key = chunk.strip()
+            if chunk_key and chunk_key not in seen_chunks:
+                seen_chunks.add(chunk_key)
+                unique_chunks.append(chunk_key)
+
+    return "\n\n".join(unique_chunks)
 
 
 # ── JD Analysis Agent ─────────────────────────────────────────
@@ -103,13 +154,17 @@ def introductory_passthrough_agent(state: dict) -> dict:
 
 @trace_agent("cv_analysis_agent")
 def cv_analysis_agent(state: dict) -> dict:
-    """Analyzes the anonymized CV and extracts qualifications."""
-    cv_context = retrieve_relevant_chunks(
-        query="candidate experience skills education projects achievements",
-        doc_id=state["cv_doc_id"]
-    )
+    """Analyzes the anonymized CV and extracts qualifications across all
+    recruiter-screening dimensions (work experience, hard/soft skills,
+    languages, leadership, certifications, industries, location).
+
+    Uses multi-facet retrieval so that every dimension has a fair chance
+    to land in the retrieved context, not just whichever cluster happens
+    to sit closest to a single generic query vector.
+    """
+    cv_context = _retrieve_cv_context_multi_facet(state["cv_doc_id"])
     user_prompt = CV_ANALYSIS_USER.format(cv_context=cv_context)
-    raw = _call_openai(CV_ANALYSIS_SYSTEM, user_prompt, max_tokens=1500)
+    raw = _call_openai(CV_ANALYSIS_SYSTEM, user_prompt, max_tokens=2500)
     state["cv_analysis"] = _parse_json(raw)
     return state
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Sparkles, ChevronDown, ChevronUp, Shield, Loader2, Plus, Trash2, RefreshCw, Download, Copy, AlertTriangle, CheckCircle2 } from 'lucide-react'
-import { getJobDescriptions, getInterviewRounds, getCandidates, generateQuestions, getDefaultCategories, exportInterviewKit, regenerateQuestion, getRoundSettings } from '../services/api'
+import { getJobDescriptions, getInterviewRounds, getCandidates, generateQuestions, getDefaultCategories, exportInterviewKit, regenerateQuestion, getRoundSettings, assignCandidateToRound } from '../services/api'
 
 function RubricDisplay({ rubric }) {
   const [open, setOpen] = useState(false)
@@ -76,11 +76,15 @@ export default function InterviewKit() {
   const [categories, setCategories] = useState([])
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [assigningCandidate, setAssigningCandidate] = useState(false)
   const [replacingIdx, setReplacingIdx] = useState(null)
 
   useEffect(() => { getJobDescriptions().then(r => setJds(r.data)).catch(() => {}) }, [])
   useEffect(() => { if (selectedJd) getInterviewRounds(selectedJd).then(r => setRounds(r.data)).catch(() => {}) }, [selectedJd])
-  useEffect(() => { if (selectedRound) getCandidates(selectedRound).then(r => setCandidates(r.data)).catch(() => {}) }, [selectedRound])
+  // Load the FULL Talent Pool (no round filter) so recruiters can pick any
+  // candidate and assign them on the fly. Assigned-status is derived per-candidate
+  // via c.assigned_rounds (see select options below).
+  useEffect(() => { if (selectedRound) getCandidates().then(r => setCandidates(r.data)).catch(() => {}) }, [selectedRound])
   useEffect(() => { getDefaultCategories().then(r => setCategories(r.data.categories)).catch(() => {}) }, [])
 
   // Load saved round settings when a round is selected
@@ -95,6 +99,33 @@ export default function InterviewKit() {
   const updateCat = (i, field, val) => setCategories(prev => prev.map((c, j) => j === i ? { ...c, [field]: val } : c))
   const addCat = () => setCategories(prev => [...prev, { category: '', count: 1, difficulty: 'medium', weight: 0.2 }])
   const removeCat = (i) => setCategories(prev => prev.filter((_, j) => j !== i))
+
+  // When the recruiter picks a candidate from the dropdown we automatically
+  // assign them to the current round if they are not already assigned.
+  // This keeps the Talent Pool workflow seamless: one click instead of
+  // switching to the Upload page.
+  const handleSelectCandidate = async (candidateId) => {
+    setSelectedCandidate(candidateId)
+    if (!candidateId || !selectedRound) return
+
+    const candidate = candidates.find(c => c.id === candidateId)
+    if (!candidate) return
+
+    const alreadyAssigned = (candidate.assigned_rounds || []).some(r => r.id === selectedRound)
+    if (alreadyAssigned) return
+
+    setAssigningCandidate(true)
+    try {
+      await assignCandidateToRound(candidateId, selectedRound)
+      // Refresh candidate list so assigned_rounds reflects the new state
+      const res = await getCandidates()
+      setCandidates(res.data)
+    } catch (e) {
+      alert('Zuweisung fehlgeschlagen: ' + (e.response?.data?.detail || e.message))
+      setSelectedCandidate('')
+    }
+    setAssigningCandidate(false)
+  }
 
   const getWeight = (questionCategory) => {
     if (!result?.category_weights) return null
@@ -160,14 +191,29 @@ export default function InterviewKit() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Kandidat:in</label>
-              <select value={selectedCandidate} onChange={e => setSelectedCandidate(e.target.value)} className="w-full border border-surface-200 rounded-xl px-3 py-2 text-sm bg-white" disabled={!selectedRound}>
+              <label className="text-xs text-gray-500 mb-1 block">
+                Kandidat:in
+                {assigningCandidate && <span className="ml-2 text-brand-500">· weise zu...</span>}
+              </label>
+              <select value={selectedCandidate} onChange={e => handleSelectCandidate(e.target.value)} className="w-full border border-surface-200 rounded-xl px-3 py-2 text-sm bg-white" disabled={!selectedRound || assigningCandidate}>
                 <option value="">Wählen...</option>
                 {candidates.map(c => {
-                    const round = rounds.find(r => r.id === selectedRound)
-                    return <option key={c.id} value={c.id}>{c.name}{round?.has_questions ? ' (Fragen vorhanden)' : ''}</option>
+                  const assignedRounds = c.assigned_rounds || []
+                  const inThisRound = assignedRounds.some(r => r.id === selectedRound)
+                  const otherRoundsCount = assignedRounds.filter(r => r.id !== selectedRound).length
+                  const round = rounds.find(r => r.id === selectedRound)
+                  const questionMarker = inThisRound && round?.has_questions ? ' (Fragen vorhanden)' : ''
+                  const suffix = inThisRound
+                    ? ` · in dieser Runde${questionMarker}`
+                    : otherRoundsCount > 0
+                      ? ` · aus Talent Pool (in ${otherRoundsCount} Runde${otherRoundsCount > 1 ? 'n' : ''})`
+                      : ' · aus Talent Pool (neu)'
+                  return <option key={c.id} value={c.id}>{c.name}{suffix}</option>
                 })}
               </select>
+              {candidates.length === 0 && selectedRound && (
+                <p className="text-xs text-gray-400 mt-1">Talent Pool ist leer. Lade einen Kandidaten über die Upload-Seite hoch.</p>
+              )}
             </div>
           </div>
 

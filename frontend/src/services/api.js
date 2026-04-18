@@ -50,6 +50,7 @@ export const deleteRound = (roundId) => api.delete(`/interview-rounds/${roundId}
 export const deleteJobDescription = (jdId) => api.delete(`/job-descriptions/${jdId}`)
 export const healthCheck = () => api.get('/health', { baseURL: 'http://127.0.0.1:8000' })
 export const getJdPdfUrl = (jdId) => `http://127.0.0.1:8000/api/job-descriptions/${jdId}/pdf`
+export const getJdContent = (jdId) => api.get(`/job-descriptions/${jdId}/content`)
 export const getCvPdfUrl = (candidateId) => `http://127.0.0.1:8000/api/candidates/${candidateId}/pdf`
 export const exportInterviewKit = (roundId) => `http://127.0.0.1:8000/api/export/interview-kit/${roundId}`
 

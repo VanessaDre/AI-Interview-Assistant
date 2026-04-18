@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Activity, FileText, Users, UserPlus, CheckCircle, AlertCircle, Trash2, Eye, X, ChevronDown, ChevronRight, Download, Sparkles } from 'lucide-react'
-import { healthCheck, getJobDescriptions, getCandidates, getInterviewRounds, deleteJobDescription, deleteCandidate, deleteRound, deleteRoundQuestions, getJdPdfUrl, getCvPdfUrl, getRoundQuestions, exportInterviewKit } from '../services/api'
+import { Activity, FileText, Users, UserPlus, CheckCircle, AlertCircle, Trash2, Eye, X, ChevronDown, ChevronRight, Download, Sparkles, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { healthCheck, getJobDescriptions, getCandidates, getInterviewRounds, deleteJobDescription, deleteCandidate, deleteRound, deleteRoundQuestions, getJdPdfUrl, getJdContent, getCvPdfUrl, getRoundQuestions, exportInterviewKit } from '../services/api'
 
 const SYSTEM_PROTECTED_JD_IDS = ['SYSTEM_KENNENLERN_DEFAULT']
 const SYSTEM_PROTECTED_ROUND_IDS = ['SYSTEM_KENNENLERN_ROUND_DEFAULT']
@@ -15,6 +15,43 @@ function PdfModal({ url, title, onClose }) {
           <button onClick={onClose} className="p-1 hover:bg-surface-100 rounded-lg"><X size={18} /></button>
         </div>
         <iframe src={url} className="flex-1 rounded-b-2xl" />
+      </div>
+    </div>
+  )
+}
+
+// TextModal — renders the plain-text content of system-level JDs that have
+// no backing PDF (like the generic 'Kennenlerngespraech'). Shows the exact
+// text used as question-generation context so the recruiter can verify the
+// basis of the AI-generated interview questions (EU AI Act Art. 13).
+function TextModal({ data, onClose }) {
+  if (!data) return null
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-8" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-surface-200">
+          <div>
+            <h3 className="font-medium text-gray-700">{data.title}</h3>
+            {data.company && !data.is_system && <p className="text-xs text-gray-400">{data.company}</p>}
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-surface-100 rounded-lg"><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          {data.is_system && (
+            <div className="mb-4 p-3 bg-brand-50 border border-brand-100 rounded-lg">
+              <p className="text-xs text-brand-700 font-medium mb-1">System-generierte Job Description</p>
+              <p className="text-xs text-brand-600">
+                Dies ist kein hochgeladenes Dokument, sondern ein systeminterner Kontext-Text,
+                den die KI als Basis für Kennenlern-Fragen nutzt.
+              </p>
+            </div>
+          )}
+          {data.content ? (
+            <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">{data.content}</pre>
+          ) : (
+            <p className="text-sm text-gray-400 italic">Kein Text-Inhalt verfügbar.</p>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -44,12 +81,75 @@ function RubricInline({ rubric }) {
   )
 }
 
+function ReviewInline({ review }) {
+  const [open, setOpen] = useState(false)
+  if (!review) return null
+
+  const avg = review.average_score
+  const antiDisc = (review.anti_discrimination_check || '').toLowerCase()
+  const attempts = review.retry_attempts || 0
+  const scores = review.scores || {}
+  const reasoning = review.reasoning || ''
+
+  const avgColor =
+    avg >= 8 ? 'bg-emerald-100 text-emerald-700' :
+    avg >= 7 ? 'bg-brand-50 text-brand-700' :
+    avg >= 5 ? 'bg-amber-100 text-amber-700' :
+    'bg-red-100 text-red-700'
+
+  return (
+    <div className="mt-1">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-700">
+        {avg !== undefined && (
+          <span className={`px-1.5 py-0.5 rounded-full font-medium ${avgColor}`}>QA {avg}/10</span>
+        )}
+        {antiDisc === 'pass' && (
+          <span className="flex items-center gap-0.5 text-emerald-600">
+            <ShieldCheck size={10} /> Anti-Diskriminierung ok
+          </span>
+        )}
+        {antiDisc === 'fail' && (
+          <span className="flex items-center gap-0.5 text-red-600">
+            <ShieldAlert size={10} /> FAIL
+          </span>
+        )}
+        {attempts > 0 && (
+          <span className="text-amber-600">· {attempts}× regeneriert</span>
+        )}
+        <span className="text-brand-500 hover:text-brand-700 ml-auto">
+          {open ? 'Details verbergen' : 'Details'}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1 p-2 bg-surface-50 rounded-lg space-y-1">
+          {Object.entries(scores).length > 0 && (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+              {Object.entries(scores).map(([k, v]) => (
+                <div key={k} className="flex justify-between text-[10px]">
+                  <span className="text-gray-500">{k}</span>
+                  <span className="font-medium text-gray-700">{v}/10</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {reasoning && (
+            <p className="text-[10px] text-gray-500 pt-1 border-t border-surface-200 italic">
+              {reasoning}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const [health, setHealth] = useState(null)
   const [jds, setJds] = useState([])
   const [allCandidates, setAllCandidates] = useState([])
   const [rounds, setRounds] = useState([])
   const [pdfModal, setPdfModal] = useState(null)
+  const [textModal, setTextModal] = useState(null)
   const [jdsOpen, setJdsOpen] = useState(true)
   const [candidatesOpen, setCandidatesOpen] = useState(true)
   const [roundsOpen, setRoundsOpen] = useState(true)
@@ -85,6 +185,19 @@ export default function Dashboard() {
     load()
   }
 
+  const handleViewJd = async (jd, isSystemJd) => {
+    if (isSystemJd) {
+      try {
+        const res = await getJdContent(jd.id)
+        setTextModal(res.data)
+      } catch {
+        setTextModal({ title: jd.title, company: jd.company, content: '', is_system: true })
+      }
+    } else {
+      setPdfModal({ url: getJdPdfUrl(jd.id), title: jd.title })
+    }
+  }
+
   const toggleRound = (roundId) => setOpenRoundId(prev => prev === roundId ? null : roundId)
 
   const loadQuestions = async (roundId) => {
@@ -100,13 +213,23 @@ export default function Dashboard() {
     setShowQuestionsFor(roundId)
   }
 
-  // 4-table schema: ALL candidates are permanently in the talent pool.
-  // "newInPool" = candidates never assigned to any round yet (for the "new arrivals" metric)
   const newInPool = allCandidates.filter(c => c.is_unassigned)
 
+  // System entities are internal plumbing — they should only count once they
+  // carry real user content. The System-JD never counts (it's a virtual
+  // context, not a recruited-for role). The System-Round counts as soon as
+  // at least one candidate is assigned to it, because then it represents an
+  // actual Kennenlern-conversation the recruiter is running.
+  const userJdCount = jds.filter(j => !SYSTEM_PROTECTED_JD_IDS.includes(j.id)).length
+  const userRoundCount = rounds.filter(r => {
+    if (!SYSTEM_PROTECTED_ROUND_IDS.includes(r.id)) return true
+    // System round — only count if it actually has candidates
+    return (r.candidate_count || 0) > 0
+  }).length
+
   const cards = [
-    { label: 'Job Descriptions', value: jds.length, icon: FileText, color: 'text-brand-500' },
-    { label: 'Interview Rounds', value: rounds.length, icon: Activity, color: 'text-violet-500' },
+    { label: 'Job Descriptions', value: userJdCount, icon: FileText, color: 'text-brand-500' },
+    { label: 'Interview Rounds', value: userRoundCount, icon: Activity, color: 'text-violet-500' },
     { label: 'Talent Pool', value: allCandidates.length, icon: Users, color: 'text-purple-500' },
     { label: 'Neu im Pool', value: newInPool.length, icon: UserPlus, color: 'text-pink-500' },
   ]
@@ -133,7 +256,7 @@ export default function Dashboard() {
           <button onClick={() => setJdsOpen(!jdsOpen)} className="flex items-center gap-2 w-full text-left mb-3">
             {jdsOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
             <h3 className="text-sm font-medium text-gray-600">Job Descriptions</h3>
-            <span className="text-xs text-gray-400 ml-auto">{jds.length}</span>
+            <span className="text-xs text-gray-400 ml-auto">{userJdCount}</span>
           </button>
           {jdsOpen && (
             <div className="space-y-2">
@@ -141,22 +264,18 @@ export default function Dashboard() {
                 jds.map(jd => {
                   const isSystemJd = SYSTEM_PROTECTED_JD_IDS.includes(jd.id)
                   return (
-                    <div key={jd.id} className="flex items-center justify-between p-3 bg-surface-50 rounded-xl gap-2">
-                      <div className="min-w-0 flex-1">
+                    <div key={jd.id} className="flex items-center justify-between p-2.5 bg-surface-50 rounded-xl">
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-gray-700 truncate">{jd.title}</p>
                           {isSystemJd && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">System</span>
                           )}
                         </div>
-                        {!isSystemJd && (
-                          <p className="text-xs text-gray-400 truncate">{jd.company}</p>
-                        )}
+                        {!isSystemJd && <p className="text-xs text-gray-400 truncate">{jd.company}</p>}
                       </div>
                       <div className="flex gap-1 shrink-0">
-                        {!isSystemJd && (
-                          <button onClick={() => setPdfModal({ url: getJdPdfUrl(jd.id), title: jd.title })} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="PDF ansehen"><Eye size={15} /></button>
-                        )}
+                        <button onClick={() => handleViewJd(jd, isSystemJd)} className="p-1.5 hover:bg-brand-50 rounded-lg text-brand-500" title="JD ansehen"><Eye size={15} /></button>
                         {!isSystemJd && (
                           <button onClick={() => handleDeleteJd(jd.id, jd.title)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400" title="Loeschen"><Trash2 size={15} /></button>
                         )}
@@ -179,19 +298,13 @@ export default function Dashboard() {
             <div className="space-y-2">
               {allCandidates.length === 0 ? <p className="text-xs text-gray-400">Noch keine Kandidaten</p> :
                 allCandidates.map(c => (
-                  <div key={c.id} className="flex items-center justify-between p-3 bg-surface-50 rounded-xl">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-gray-700 truncate">{c.name}</p>
-                        {c.is_unassigned && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-600 font-medium shrink-0">Neu im Pool</span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-400">
-                        {new Date(c.created_at).toLocaleDateString('de-DE')}
-                        {c.assigned_rounds && c.assigned_rounds.length > 0 && (
-                          <span> · {c.assigned_rounds.map(r => r.title).join(', ')}</span>
-                        )}
+                  <div key={c.id} className="flex items-center justify-between p-2.5 bg-surface-50 rounded-xl">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-700 truncate">{c.name}</p>
+                      <p className="text-xs text-gray-400 truncate">
+                        {c.assigned_rounds && c.assigned_rounds.length > 0
+                          ? c.assigned_rounds.map(ar => ar.title).join(', ')
+                          : 'Unassigned'}
                       </p>
                     </div>
                     <div className="flex gap-1 shrink-0">
@@ -210,7 +323,7 @@ export default function Dashboard() {
         <button onClick={() => setRoundsOpen(!roundsOpen)} className="flex items-center gap-2 w-full text-left mb-3">
           {roundsOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
           <h3 className="text-sm font-medium text-gray-600">Interview Rounds</h3>
-          <span className="text-xs text-gray-400 ml-auto">{rounds.length}</span>
+          <span className="text-xs text-gray-400 ml-auto">{userRoundCount}</span>
         </button>
         {roundsOpen && (
           <div className="space-y-2">
@@ -290,6 +403,7 @@ export default function Dashboard() {
                                     {q.category_weight !== undefined && q.category_weight > 0 && (
                                       <p className="text-[10px] text-gray-400 mt-0.5">Gewichtung: {(q.category_weight * 100).toFixed(0)}%</p>
                                     )}
+                                    <ReviewInline review={q.review} />
                                     <RubricInline rubric={q.rubric} />
                                   </div>
                                 ))}
@@ -332,6 +446,7 @@ export default function Dashboard() {
       )}
 
       <PdfModal url={pdfModal?.url} title={pdfModal?.title} onClose={() => setPdfModal(null)} />
+      <TextModal data={textModal} onClose={() => setTextModal(null)} />
     </div>
   )
 }
